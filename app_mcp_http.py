@@ -1,32 +1,29 @@
-# app_gsheet_direct_v2.py
-# Streamlit : lit directement un Google Sheets (export CSV) et produit 3 graphiques conformes au cahier des charges
-# Usage : streamlit run app_gsheet_direct_v2.py
+# app_gsheet_direct_altair.py
+# Streamlit + Altair : lecture directe Google Sheets (CSV) -> 3 graphiques conformes au cahier des charges
 
-import re
 import io
+import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
-import pandas as pd
 import numpy as np
+import pandas as pd
+import requests
 import streamlit as st
-import matplotlib.pyplot as plt
-from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
+import altair as alt
 
-# =========================
-# Paramètres par défaut (votre fichier + onglets)
-# =========================
+# ---------------------------
+# Paramètres par défaut
+# ---------------------------
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1C3ATTbCfnqT-Hx1gqHCA1wLv0Wl9RDrtVn1CgV2P6EY/edit?gid=0#gid=0"
 GID_VARIATION = 0              # "VARIATION JOURNALIÈRE"
 GID_MM        = 45071720       # "MOYENNE MOBILE"
 GID_RSI       = 372876708      # "RSI"
 
-# =========================
+# ---------------------------
 # Utilitaires
-# =========================
+# ---------------------------
 def extract_spreadsheet_id(url_or_id: str) -> str:
-    """Accepte un ID brut ou une URL Google Sheets ; renvoie l'ID (entre /d/<ID>/)."""
     m = re.search(r"/d/([a-zA-Z0-9-_]+)/", url_or_id)
     if m:
         return m.group(1)
@@ -36,17 +33,15 @@ def csv_export_url(sheet_id: str, gid: int) -> str:
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 def fetch_csv_as_df(url: str, timeout: int = 30) -> pd.DataFrame:
-    """Télécharge l'export CSV complet (toutes les lignes)."""
-    resp = requests.get(url, timeout=timeout)
-    resp.raise_for_status()
-    content = resp.content.decode("utf-8", errors="replace")
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    content = r.content.decode("utf-8", errors="replace")
     return pd.read_csv(io.StringIO(content))
 
 def strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
 
 def normalize_name(s: str) -> str:
-    """Normalise les libellés : minuscules, sans accents, non-alphanum -> '_'."""
     x = strip_accents(str(s)).lower().strip()
     x = re.sub(r"[^\w]+", "_", x)
     x = re.sub(r"_+", "_", x).strip("_")
@@ -61,7 +56,6 @@ def to_datetime_safe(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s, errors="coerce")
 
 def to_numeric_safe(s: pd.Series) -> pd.Series:
-    # Gère "12 345", "12,34", "12.34", "5%" → 5 (on ne convertit pas en fraction ici)
     if s.dtype == object:
         s2 = s.astype(str).str.replace(r"\s", "", regex=True)
         s2 = s2.str.replace(",", ".", regex=False)
@@ -79,13 +73,12 @@ def normalize_types(df: pd.DataFrame) -> pd.DataFrame:
     return d
 
 def find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    """Trouve la première colonne présente parmi 'candidates' après normalisation."""
     cols = set(df.columns)
     for c in candidates:
         n = normalize_name(c)
         if n in cols:
             return n
-    # matching par similarité simple (contient):
+    # fallback: inclusion partielle
     for ncol in df.columns:
         for c in candidates:
             if normalize_name(c) in ncol:
@@ -96,9 +89,8 @@ def date_range_label(df: pd.DataFrame, date_col: str = "date") -> Tuple[str, str
     d2 = df[df[date_col].notna()]
     if d2.empty:
         return "?", "?"
-    mn = d2[date_col].min()
-    mx = d2[date_col].max()
-    return (mn.strftime("%Y-%m-%d"), mx.strftime("%Y-%m-%d"))
+    return (d2[date_col].min().strftime("%Y-%m-%d"),
+            d2[date_col].max().strftime("%Y-%m-%d"))
 
 def last_non_nan(s: pd.Series) -> Optional[float]:
     try:
@@ -106,45 +98,37 @@ def last_non_nan(s: pd.Series) -> Optional[float]:
     except Exception:
         return None
 
-# =========================
-# Chargement & validation par feuille (robuste)
-# =========================
+# ---------------------------
+# Chargement/validation
+# ---------------------------
 def load_variation(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-    """Retourne df normalisé pour Variation + messages (outliers, colonnes manquantes)."""
-    msgs = []
+    msgs: List[str] = []
     d = normalize_types(normalize_columns(df_raw))
-    # Colonnes attendues (détection souple)
     c_date = "date" if "date" in d.columns else find_column(d, ["date", "jour", "datetime"])
     c_var  = find_column(d, ["variation_pct", "variation", "variation_journaliere", "rendement", "return"])
-    missing = [x for x in ["date", "variation_pct"] if (x=="date" and not c_date) or (x=="variation_pct" and not c_var)]
-    if missing:
-        msgs.append(f"Colonnes manquantes/équivalents non trouvés: {', '.join(missing)}.")
-        raise ValueError("; ".join(msgs))
+    if not c_date or not c_var:
+        raise ValueError("Colonnes requises introuvables pour Variation (date + variation_pct/variation).")
     out = d[[c_date, c_var]].rename(columns={c_date: "date", c_var: "variation_pct"})
-    # Outliers > ±50 % (décimal 0.5)
     if (out["variation_pct"].abs() > 0.5).any():
-        msgs.append("Outliers détectés (> ±50% jour/jour) — non filtrés (conformément aux spécifications).")
+        msgs.append("Outliers détectés (> ±50% jour/jour) — non filtrés, conformément aux spécifications.")
     return out, msgs
 
 def load_mm(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-    msgs = []
+    msgs: List[str] = []
     d = normalize_types(normalize_columns(df_raw))
     c_date = "date" if "date" in d.columns else find_column(d, ["date", "jour", "datetime"])
     c_close = find_column(d, ["close", "cours", "price", "close_price"])
     c_mm50  = find_column(d, ["mm50", "ma50", "sma50"])
     c_mm200 = find_column(d, ["mm200", "ma200", "sma200"])
-    required = {"date": c_date, "close": c_close, "mm50": c_mm50, "mm200": c_mm200}
-    miss = [k for k, v in required.items() if v is None]
-    if miss:
-        msgs.append(f"Colonnes manquantes/équivalents non trouvés: {', '.join(miss)}.")
-        raise ValueError("; ".join(msgs))
+    if not all([c_date, c_close, c_mm50, c_mm200]):
+        raise ValueError("Colonnes requises introuvables pour MM (date, close, mm50, mm200).")
     out = d[[c_date, c_close, c_mm50, c_mm200]].rename(columns={
         c_date: "date", c_close: "close", c_mm50: "mm50", c_mm200: "mm200"
     })
     return out, msgs
 
 def load_rsi(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
-    msgs = []
+    msgs: List[str] = []
     d = normalize_types(normalize_columns(df_raw))
     c_date  = "date" if "date" in d.columns else find_column(d, ["date", "jour", "datetime"])
     c_close = find_column(d, ["close", "cours", "price", "close_price"])
@@ -159,19 +143,12 @@ def load_rsi(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     if c_long:  out["long_terme"] = d[c_long]
     return out, msgs
 
-# =========================
-# Tracés (matplotlib, un graphique par figure)
-# =========================
-def format_date_axis(ax):
-    locator = AutoDateLocator()
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(ConciseDateFormatter(locator))
-    plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
-
-def insight_rsi(df: pd.DataFrame) -> str:
+# ---------------------------
+# Insights (1 ligne)
+# ---------------------------
+def insight_rsi_line(df: pd.DataFrame) -> str:
     def zone(v: Optional[float]) -> str:
-        if v is None or np.isnan(v):
-            return "n.d."
+        if v is None or np.isnan(v): return "n.d."
         if v >= 70: return "surachat"
         if v <= 30: return "survente"
         return "neutre"
@@ -179,161 +156,187 @@ def insight_rsi(df: pd.DataFrame) -> str:
     rc = last_non_nan(df.get("court", pd.Series(dtype=float)))
     rm = last_non_nan(df.get("moyen", pd.Series(dtype=float)))
     rl = last_non_nan(df.get("long_terme", pd.Series(dtype=float)))
-    return f"Dernier point {last_date.date() if pd.notna(last_date) else 'n.d.'} — Court {rc:.2f if rc is not None else float('nan')}: {zone(rc)}, Moyen {rm:.2f if rm is not None else float('nan')}: {zone(rm)}, Long {rl:.2f if rl is not None else float('nan')}: {zone(rl)}."
+    dstr = last_date.date() if pd.notna(last_date) else "n.d."
+    rc_s = "n.d." if rc is None or np.isnan(rc) else f"{rc:.2f}"
+    rm_s = "n.d." if rm is None or np.isnan(rm) else f"{rm:.2f}"
+    rl_s = "n.d." if rl is None or np.isnan(rl) else f"{rl:.2f}"
+    return f"Dernier point {dstr} — Court {rc_s}: {zone(rc)}, Moyen {rm_s}: {zone(rm)}, Long {rl_s}: {zone(rl)}."
 
-def insight_variation(df: pd.DataFrame, outlier_flag: bool) -> str:
+def insight_variation_line(df: pd.DataFrame, has_outliers: bool) -> str:
     pos_pct = 100.0 * (df["variation_pct"] > 0).mean()
     base = f"Série centrée autour de 0 — {pos_pct:.0f}% de jours positifs."
-    if outlier_flag:
+    if has_outliers:
         base += " Outliers ±50% détectés."
     return base
 
-def insight_mm(df: pd.DataFrame) -> str:
+def insight_mm_line(df: pd.DataFrame) -> str:
     last_date = df["date"].dropna().max()
     last = df[df["date"] == last_date].iloc[-1] if pd.notna(last_date) else df.iloc[-1]
     config = "haussière" if last["mm50"] > last["mm200"] else "baissière"
     rel_close = "au-dessus" if (last["close"] > max(last["mm50"], last["mm200"])) else ("au-dessous" if (last["close"] < min(last["mm50"], last["mm200"])) else "entre")
-    return f"Dernier point {last_date.date() if pd.notna(last_date) else 'n.d.'} — config MM {config}, cours {rel_close} des MM."
+    dstr = last_date.date() if pd.notna(last_date) else "n.d."
+    return f"Dernier point {dstr} — config MM {config}, cours {rel_close} des MM."
 
-def plot_rsi(df: pd.DataFrame):
-    df2 = df.dropna(subset=["date"]).sort_values("date")
-    if df2.empty:
-        st.error("Feuille RSI vide ou illisible.")
-        return
+# ---------------------------
+# Charts Altair
+# ---------------------------
+def chart_rsi(df: pd.DataFrame) -> alt.Chart:
+    df2 = df.dropna(subset=["date"]).sort_values("date").copy()
     dmin, dmax = date_range_label(df2, "date")
     title = f"RSI (court, moyen, long) — {dmin} à {dmax}"
 
-    fig, ax = plt.subplots(figsize=(10, 4.5))
-    # Traces (si colonnes présentes)
-    if "court" in df2.columns:
-        ax.plot(df2["date"], df2["court"], label="Court")
-    if "moyen" in df2.columns:
-        ax.plot(df2["date"], df2["moyen"], label="Moyen")
-    if "long_terme" in df2.columns:
-        ax.plot(df2["date"], df2["long_terme"], label="Long Terme")
+    # Passage en format long
+    long_cols = []
+    if "court" in df2.columns: long_cols.append(("court","Court"))
+    if "moyen" in df2.columns: long_cols.append(("moyen","Moyen"))
+    if "long_terme" in df2.columns: long_cols.append(("long_terme","Long Terme"))
 
-    ax.axhline(30, linestyle="--", linewidth=1)
-    ax.axhline(70, linestyle="--", linewidth=1)
-    ax.set_ylim(0, 100)
-    ax.set_title(title)
-    ax.set_ylabel("RSI")
-    ax.legend(loc="best")
-    format_date_axis(ax)
+    if not long_cols:
+        raise ValueError("Aucune colonne RSI (court/moyen/long) détectée.")
 
-    # Annotations des dernières valeurs
-    for col, lab in [("court", "Court"), ("moyen", "Moyen"), ("long_terme", "Long Terme")]:
-        if col in df2.columns and df2[col].notna().any():
-            x = df2["date"].iloc[-1]
-            y = df2[col].dropna().iloc[-1]
-            ax.annotate(f"{lab}: {y:.2f}", xy=(x, y), xytext=(8, 0),
-                        textcoords="offset points", va="center")
+    melted = pd.melt(
+        df2,
+        id_vars=["date"],
+        value_vars=[c for c,_ in long_cols],
+        var_name="serie",
+        value_name="valeur"
+    )
+    # Remap labels
+    label_map = {src:lab for src,lab in long_cols}
+    melted["serie"] = melted["serie"].map(label_map)
 
-    st.pyplot(fig, clear_figure=True)
-    st.caption("01_RSI — " + insight_rsi(df2))
+    base = alt.Chart(melted).encode(
+        x=alt.X("date:T", title="Date"),
+        y=alt.Y("valeur:Q", title="RSI", scale=alt.Scale(domain=[0,100])),
+        color=alt.Color("serie:N", title="Horizon"),
+        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
+    )
 
-def plot_variation(df: pd.DataFrame, msgs: List[str]):
-    df2 = df.dropna(subset=["date", "variation_pct"]).sort_values("date")
-    if df2.empty:
-        st.error("Feuille VARIATION JOURNALIÈRE vide ou illisible.")
-        return
+    lines = base.mark_line()
+
+    # Règles horizontales 30 et 70
+    h30 = alt.Chart(pd.DataFrame({"y":[30]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
+    h70 = alt.Chart(pd.DataFrame({"y":[70]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
+
+    # Annotations dernières valeurs (texte à x=max(date) par série)
+    last_points = melted.sort_values("date").groupby("serie").tail(1)
+    labels = alt.Chart(last_points).mark_text(align="left", dx=6).encode(
+        x="date:T", y="valeur:Q", text=alt.Text("label:N")
+    )
+    labels = labels.transform_calculate(
+        label="datum.serie + ': ' + format(datum.valeur, '.2f')"
+    )
+
+    return (lines + h30 + h70 + labels).properties(title=title, width="container", height=350).interactive()
+
+def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
+    df2 = df.dropna(subset=["date", "variation_pct"]).sort_values("date").copy()
     dmin, dmax = date_range_label(df2, "date")
     title = f"Variation journalière (rendements) — {dmin} à {dmax}"
 
-    fig, ax = plt.subplots(figsize=(10, 4.5))
-    ax.plot(df2["date"], df2["variation_pct"], label="Rendements quotidiens")
-    ax.axhline(0.0, linestyle="-", linewidth=1)
-    ax.set_title(title)
-    ax.set_ylabel("Rendement quotidien (décimal)")
-    ax.legend(loc="best")
-    format_date_axis(ax)
+    line = alt.Chart(df2).mark_line().encode(
+        x=alt.X("date:T", title="Date"),
+        y=alt.Y("variation_pct:Q", title="Rendement quotidien (décimal)"),
+        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("variation_pct:Q", format=".4f")]
+    )
+    zero_rule = alt.Chart(pd.DataFrame({"y":[0.0]})).mark_rule().encode(y="y:Q")
 
-    st.pyplot(fig, clear_figure=True)
-    outlier_flag = any("Outliers" in m for m in msgs)
-    st.caption("02_Rendements — " + insight_variation(df2, outlier_flag))
-    # Mention explicite (non bloquante) si outliers
-    for m in msgs:
-        if "Outliers" in m:
-            st.info(m)
+    return (line + zero_rule).properties(title=title, width="container", height=350).interactive()
 
-def plot_mm(df: pd.DataFrame):
-    df2 = df.dropna(subset=["date"]).sort_values("date")
-    if df2.empty:
-        st.error("Feuille MOYENNE MOBILE vide ou illisible.")
-        return
+def chart_mm(df: pd.DataFrame) -> alt.Chart:
+    df2 = df.dropna(subset=["date"]).sort_values("date").copy()
+    melted = pd.melt(
+        df2, id_vars=["date"], value_vars=["close","mm50","mm200"],
+        var_name="serie", value_name="valeur"
+    )
+    label_map = {"close":"Cours (Close)", "mm50":"MM50", "mm200":"MM200"}
+    melted["serie"] = melted["serie"].map(label_map)
 
-    fig, ax = plt.subplots(figsize=(10, 4.5))
-    ax.plot(df2["date"], df2["close"], label="Cours (Close)")
-    ax.plot(df2["date"], df2["mm50"], label="MM50")
-    ax.plot(df2["date"], df2["mm200"], label="MM200")
+    line = alt.Chart(melted).mark_line().encode(
+        x=alt.X("date:T", title="Date"),
+        y=alt.Y("valeur:Q", title="Prix"),
+        color=alt.Color("serie:N", title="Série"),
+        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
+    )
+    return line.properties(title="Cours vs MM50 vs MM200", width="container", height=350).interactive()
 
-    ax.set_title("Cours vs MM50 vs MM200")
-    ax.set_ylabel("Prix")
-    ax.legend(loc="best")
-    format_date_axis(ax)
-
-    st.pyplot(fig, clear_figure=True)
-    st.caption("03_Prix_MM50 — " + insight_mm(df2))
-
-# =========================
-# App
-# =========================
-st.set_page_config(page_title="Google Sheets → Graphiques (direct CSV)", layout="wide")
-st.title("Google Sheets → Graphiques (lecture directe CSV)")
+# ---------------------------
+# App Streamlit
+# ---------------------------
+st.set_page_config(page_title="Google Sheets → Graphiques (Altair)", layout="wide")
+st.title("Google Sheets → Graphiques (lecture directe CSV, Altair)")
 
 with st.sidebar:
     st.header("Source")
     url_or_id = st.text_input("URL ou ID du Google Sheets", value=DEFAULT_SHEET_URL)
-    st.caption("Assurez-vous que le document est lisible par lien (lecture publique).")
+    st.caption("Le document doit être accessible en lecture (via lien).")
     st.markdown("---")
-    st.header("GID des 3 onglets")
-    gid_var = st.number_input("gid — Variation journalière", value=GID_VARIATION, step=1)
-    gid_mm  = st.number_input("gid — Moyenne mobile", value=GID_MM, step=1)
+    st.header("gid des onglets")
+    gid_var = st.number_input("gid — VARIATION JOURNALIÈRE", value=GID_VARIATION, step=1)
+    gid_mm  = st.number_input("gid — MOYENNE MOBILE", value=GID_MM, step=1)
     gid_rsi = st.number_input("gid — RSI", value=GID_RSI, step=1)
 
 if st.button("Charger & produire les graphiques"):
-    # On tente chaque feuille indépendamment ; en cas d'erreur, on continue.
     try:
         sheet_id = extract_spreadsheet_id(url_or_id)
     except Exception as e:
-        st.error(f"Impossible d'extraire l'ID du Google Sheet : {e}")
+        st.error(f"Extraction ID Google Sheets impossible : {e}")
         st.stop()
 
     # VARIATION
+    df_var = None; msgs_var: List[str] = []
     try:
         url_var = csv_export_url(sheet_id, int(gid_var))
         df_var_raw = fetch_csv_as_df(url_var)
         df_var, msgs_var = load_variation(df_var_raw)
     except Exception as e:
-        df_var = None
-        st.error(f"[02_Rendements] Erreur de lecture/normalisation : {e}")
+        st.error(f"[02_Rendements] Erreur : {e}")
 
     # MM
+    df_mm = None
     try:
         url_mm = csv_export_url(sheet_id, int(gid_mm))
         df_mm_raw = fetch_csv_as_df(url_mm)
-        df_mm, msgs_mm = load_mm(df_mm_raw)
+        df_mm, _ = load_mm(df_mm_raw)
     except Exception as e:
-        df_mm = None
-        st.error(f"[03_Prix_MM50] Erreur de lecture/normalisation : {e}")
+        st.error(f"[03_Prix_MM50] Erreur : {e}")
 
     # RSI
+    df_rsi = None
     try:
         url_rsi = csv_export_url(sheet_id, int(gid_rsi))
         df_rsi_raw = fetch_csv_as_df(url_rsi)
-        df_rsi, msgs_rsi = load_rsi(df_rsi_raw)
+        df_rsi, _ = load_rsi(df_rsi_raw)
     except Exception as e:
-        df_rsi = None
-        st.error(f"[01_RSI] Erreur de lecture/normalisation : {e}")
+        st.error(f"[01_RSI] Erreur : {e}")
 
     st.markdown("---")
     st.markdown("## Graphiques")
 
-    if df_rsi is not None:
-        plot_rsi(df_rsi)
-    if df_var is not None:
-        plot_variation(df_var, msgs_var if df_var is not None else [])
-    if df_mm is not None:
-        plot_mm(df_mm)
+    # 01 — RSI (Altair)
+    if df_rsi is not None and not df_rsi.empty:
+        try:
+            st.altair_chart(chart_rsi(df_rsi), use_container_width=True)
+            st.caption("01_RSI — " + insight_rsi_line(df_rsi))
+        except Exception as e:
+            st.error(f"[01_RSI] Rendu indisponible : {e}")
 
-    st.markdown("---")
-    st.caption("Rendu : 3 graphiques distincts, légendes FR, police par défaut, dates lisibles. Pas de styles/palette exotiques.")
+    # 02 — Variation (Altair)
+    if df_var is not None and not df_var.empty:
+        try:
+            st.altair_chart(chart_variation(df_var, msgs_var), use_container_width=True)
+            has_outliers = any("Outliers" in m for m in msgs_var)
+            st.caption("02_Rendements — " + insight_variation_line(df_var, has_outliers))
+            for m in msgs_var:
+                if "Outliers" in m:
+                    st.info(m)
+        except Exception as e:
+            st.error(f"[02_Rendements] Rendu indisponible : {e}")
+
+    # 03 — MM (Altair)
+    if df_mm is not None and not df_mm.empty:
+        try:
+            st.altair_chart(chart_mm(df_mm), use_container_width=True)
+            st.caption("03_Prix_MM50 — " + insight_mm_line(df_mm))
+        except Exception as e:
+            st.error(f"[03_Prix_MM50] Rendu indisponible : {e}")
