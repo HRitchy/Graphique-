@@ -16,6 +16,7 @@ DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1C3ATTbCfnqT-Hx1gqHC
 GID_VARIATION = 0
 GID_MM        = 45071720
 GID_RSI       = 372876708
+CHART_HEIGHT  = 280  # hauteur adaptée aux écrans mobiles
 
 # ---------- Utils ----------
 def extract_spreadsheet_id(url_or_id: str) -> str:
@@ -240,7 +241,7 @@ def chart_rsi(df: pd.DataFrame) -> alt.Chart:
         label="datum.serie + ': ' + format(datum.valeur, '.2f')"
     )
 
-    return (lines + h30 + h70 + labels).properties(title=title, width="container", height=350).interactive()
+    return (lines + h30 + h70 + labels).properties(title=title, width="container", height=CHART_HEIGHT).interactive()
 
 def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
     df2 = df.dropna(subset=["date", "variation_pct"]).sort_values("date").copy()
@@ -253,7 +254,7 @@ def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("variation_pct:Q", format=".4f")]
     )
     zero_rule = alt.Chart(pd.DataFrame({"y":[0.0]})).mark_rule().encode(y="y:Q")
-    return (line + zero_rule).properties(title=title, width="container", height=350).interactive()
+    return (line + zero_rule).properties(title=title, width="container", height=CHART_HEIGHT).interactive()
 
 def chart_mm(df: pd.DataFrame) -> alt.Chart:
     df2 = df.dropna(subset=["date"]).sort_values("date").copy()
@@ -268,10 +269,14 @@ def chart_mm(df: pd.DataFrame) -> alt.Chart:
         color=alt.Color("serie:N", title="Série"),
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
     )
-    return line.properties(title="Cours vs MM50 vs MM200", width="container", height=350).interactive()
+    return line.properties(title="Cours vs MM50 vs MM200", width="container", height=CHART_HEIGHT).interactive()
 
 # ---------- App ----------
-st.set_page_config(page_title="Google Sheets → Graphiques (Altair)", layout="wide")
+st.set_page_config(
+    page_title="Google Sheets → Graphiques (Altair)",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
 st.title("Google Sheets → Graphiques (lecture directe CSV, Altair)")
 
 with st.sidebar:
@@ -321,27 +326,28 @@ if st.button("Charger & produire les graphiques"):
     st.markdown("---")
     st.markdown("## Graphiques")
 
+    graphs = []
     if df_rsi is not None and not df_rsi.empty:
-        try:
-            st.altair_chart(chart_rsi(df_rsi), use_container_width=True)
-            st.caption("01_RSI — " + insight_rsi_line(df_rsi))
-        except Exception as e:
-            st.error(f"[01_RSI] Rendu indisponible : {e}")
-
+        graphs.append(("01_RSI", chart_rsi(df_rsi), insight_rsi_line(df_rsi)))
     if df_var is not None and not df_var.empty:
-        try:
-            st.altair_chart(chart_variation(df_var, msgs_var), use_container_width=True)
-            has_outliers = any("Outliers" in m for m in msgs_var)
-            st.caption("02_Rendements — " + insight_variation_line(df_var, has_outliers))
-            for m in msgs_var:
-                if "Outliers" in m:
-                    st.info(m)
-        except Exception as e:
-            st.error(f"[02_Rendements] Rendu indisponible : {e}")
-
+        has_outliers = any("Outliers" in m for m in msgs_var)
+        graphs.append(("02_Rendements", chart_variation(df_var, msgs_var), insight_variation_line(df_var, has_outliers), msgs_var))
     if df_mm is not None and not df_mm.empty:
-        try:
-            st.altair_chart(chart_mm(df_mm), use_container_width=True)
-            st.caption("03_Prix_MM50 — " + insight_mm_line(df_mm))
-        except Exception as e:
-            st.error(f"[03_Prix_MM50] Rendu indisponible : {e}")
+        graphs.append(("03_Prix_MM50", chart_mm(df_mm), insight_mm_line(df_mm)))
+
+    if graphs:
+        tabs = st.tabs([g[0] for g in graphs])
+        for idx, g in enumerate(graphs):
+            label, chart_obj, insight, *extra = g
+            with tabs[idx]:
+                try:
+                    st.altair_chart(chart_obj, use_container_width=True)
+                    st.caption(f"{label} — {insight}")
+                    if extra:
+                        for m in extra[0]:
+                            if "Outliers" in m:
+                                st.info(m)
+                except Exception as e:
+                    st.error(f"[{label}] Rendu indisponible : {e}")
+    else:
+        st.info("Aucune donnée à afficher.")
