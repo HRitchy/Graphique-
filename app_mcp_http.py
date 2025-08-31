@@ -11,12 +11,15 @@ import pandas as pd
 import requests
 import streamlit as st
 import altair as alt
+import streamlit.components.v1 as components
 
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1C3ATTbCfnqT-Hx1gqHCA1wLv0Wl9RDrtVn1CgV2P6EY/edit?gid=0#gid=0"
 GID_VARIATION = 0
 GID_MM        = 45071720
+
 GID_RSI       = 372876708
-CHART_HEIGHT  = 280  # hauteur adaptée aux écrans mobiles
+DEFAULT_CHART_HEIGHT = 280  # hauteur adaptée aux écrans mobiles
+CHART_HEIGHT = DEFAULT_CHART_HEIGHT
 
 # ---------- Utils ----------
 def extract_spreadsheet_id(url_or_id: str) -> str:
@@ -274,12 +277,39 @@ def chart_mm(df: pd.DataFrame) -> alt.Chart:
 # ---------- App ----------
 st.set_page_config(
     page_title="Google Sheets → Graphiques (Altair)",
-    layout="centered",
-    initial_sidebar_state="collapsed",
+    layout="wide",
+)
+
+st.markdown(
+    """
+    <style>
+    .main .block-container{padding-top:1rem;padding-left:0.5rem;padding-right:0.5rem;}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 st.title("Google Sheets → Graphiques (lecture directe CSV, Altair)")
 
-with st.sidebar:
+components.html(
+    """
+    <script>
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get('w')) {
+        params.set('w', window.innerWidth);
+        window.location.search = params.toString();
+    }
+    </script>
+    """,
+    height=0,
+)
+params = st.experimental_get_query_params()
+try:
+    width = int(params.get("w", [0])[0])
+    CHART_HEIGHT = max(200, int(width * 0.6))
+except Exception:
+    CHART_HEIGHT = DEFAULT_CHART_HEIGHT
+
+with st.expander("Configuration"):
     st.header("Source")
     url_or_id = st.text_input("URL ou ID du Google Sheets", value=DEFAULT_SHEET_URL)
     st.caption("Le document doit être accessible en lecture.")
