@@ -1,5 +1,5 @@
 streamlit>=1.36.0
 pandas>=2.2.0
 requests>=2.32.0
-matplotlib>=3.7.0
+altair>=5.0.0
 numpy>=1.26.0
