@@ -245,7 +245,7 @@ def chart_rsi(df: pd.DataFrame) -> alt.Chart:
     ).encode(y="y0:Q", y2="y1:Q")
 
     return (band_low + band_high + lines + h30 + h70).properties(
-        title=title, width="container", height=CHART_HEIGHT
+        title=title, width="container", height=CHART_HEIGHT, autosize="fit"
     ).interactive()
 
 def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
@@ -264,7 +264,7 @@ def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("variation_pct:Q", format=".4f")]
     )
     zero_rule = alt.Chart(pd.DataFrame({"y":[0.0]})).mark_rule(color="black").encode(y="y:Q")
-    return (bars + zero_rule).properties(title=title, width="container", height=CHART_HEIGHT).interactive()
+    return (bars + zero_rule).properties(title=title, width="container", height=CHART_HEIGHT, autosize="fit").interactive()
 
 def chart_mm(df: pd.DataFrame) -> alt.Chart:
     df2 = df.dropna(subset=["date"]).sort_values("date").copy()
@@ -279,7 +279,7 @@ def chart_mm(df: pd.DataFrame) -> alt.Chart:
         color=alt.Color("serie:N", title="Série"),
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
     )
-    return line.properties(title="Cours vs MM50 vs MM200", width="container", height=CHART_HEIGHT).interactive()
+    return line.properties(title="Cours vs MM50 vs MM200", width="container", height=CHART_HEIGHT, autosize="fit").interactive()
 
 # ---------- App ----------
 st.set_page_config(
@@ -316,6 +316,7 @@ try:
         w_param = w_param[0]
     width = int(w_param)
     CHART_HEIGHT = max(200, int(width * 0.6))
+    st.write(f"Largeur détectée : {width}")
 except Exception:
     CHART_HEIGHT = DEFAULT_CHART_HEIGHT
 
