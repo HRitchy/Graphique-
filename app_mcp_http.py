@@ -377,10 +377,11 @@ if st.button("Charger & produire les graphiques"):
         graphs.append(("03_Prix_MM50", chart_mm(df_mm), insight_mm_line(df_mm)))
 
     if graphs:
-        tabs = st.tabs([g[0] for g in graphs])
-        for idx, g in enumerate(graphs):
+        labels = [g[0] for g in graphs]
+        selected = st.selectbox("Choisir un graphique", labels)
+        for g in graphs:
             label, chart_obj, insight, *extra = g
-            with tabs[idx]:
+            if label == selected:
                 try:
                     st.altair_chart(chart_obj, use_container_width=True)
                     st.caption(f"{label} — {insight}")
@@ -390,5 +391,6 @@ if st.button("Charger & produire les graphiques"):
                                 st.info(m)
                 except Exception as e:
                     st.error(f"[{label}] Rendu indisponible : {e}")
+                break
     else:
         st.info("Aucune donnée à afficher.")
