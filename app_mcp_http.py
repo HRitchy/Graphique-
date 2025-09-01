@@ -291,6 +291,8 @@ st.markdown(
     """
     <style>
     .main .block-container{padding-top:1rem;padding-left:0.5rem;padding-right:0.5rem;}
+    .vega-bindings input, .mark-text { font-size: 12px !important; }
+    body { background-color:#fff; color:#000; }
     </style>
     """,
     unsafe_allow_html=True,
