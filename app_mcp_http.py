@@ -244,14 +244,7 @@ def chart_rsi(df: pd.DataFrame) -> alt.Chart:
         color="#ccffcc", opacity=0.2
     ).encode(y="y0:Q", y2="y1:Q")
 
-    last_points = melted.sort_values("date").groupby("serie").tail(1)
-    labels = alt.Chart(last_points).mark_text(align="left", dx=6).encode(
-        x="date:T", y="valeur:Q", text=alt.Text("label:N")
-    ).transform_calculate(
-        label="datum.serie + ': ' + format(datum.valeur, '.2f')"
-    )
-
-    return (band_low + band_high + lines + h30 + h70 + labels).properties(
+    return (band_low + band_high + lines + h30 + h70).properties(
         title=title, width="container", height=CHART_HEIGHT
     ).interactive()
 
