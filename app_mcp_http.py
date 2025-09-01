@@ -228,7 +228,7 @@ def chart_rsi(df: pd.DataFrame) -> alt.Chart:
     melted["serie"] = melted["serie"].map(label_map)
 
     base = alt.Chart(melted).encode(
-        x=alt.X("date:T", title="Date"),
+        x=alt.X("date:T", axis=alt.Axis(title="Date", labelAngle=-45, labelLimit=70, tickCount=10)),
         y=alt.Y("valeur:Q", title="RSI", scale=alt.Scale(domain=[0,100])),
         color=alt.Color("serie:N", title="Horizon"),
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
@@ -254,7 +254,7 @@ def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
     title = f"Variation journalière (rendements) — {dmin} à {dmax}"
 
     bars = alt.Chart(df2).mark_bar().encode(
-        x=alt.X("date:T", title="Date"),
+        x=alt.X("date:T", axis=alt.Axis(title="Date", labelAngle=-45, labelLimit=70, tickCount=10)),
         y=alt.Y("variation_pct:Q", title="Rendement quotidien (décimal)"),
         color=alt.condition(
             alt.datum.variation_pct >= 0,
@@ -274,7 +274,7 @@ def chart_mm(df: pd.DataFrame) -> alt.Chart:
     melted["serie"] = melted["serie"].map(label_map)
 
     line = alt.Chart(melted).mark_line().encode(
-        x=alt.X("date:T", title="Date"),
+        x=alt.X("date:T", axis=alt.Axis(title="Date", labelAngle=-45, labelLimit=70, tickCount=10)),
         y=alt.Y("valeur:Q", title="Prix"),
         color=alt.Color("serie:N", title="Série"),
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
