@@ -237,6 +237,13 @@ def chart_rsi(df: pd.DataFrame) -> alt.Chart:
     h30 = alt.Chart(pd.DataFrame({"y":[30]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
     h70 = alt.Chart(pd.DataFrame({"y":[70]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
 
+    band_low = alt.Chart(pd.DataFrame({"y0":[0], "y1":[30]})).mark_rect(
+        color="#ffcccc", opacity=0.2
+    ).encode(y="y0:Q", y2="y1:Q")
+    band_high = alt.Chart(pd.DataFrame({"y0":[70], "y1":[100]})).mark_rect(
+        color="#ccffcc", opacity=0.2
+    ).encode(y="y0:Q", y2="y1:Q")
+
     last_points = melted.sort_values("date").groupby("serie").tail(1)
     labels = alt.Chart(last_points).mark_text(align="left", dx=6).encode(
         x="date:T", y="valeur:Q", text=alt.Text("label:N")
@@ -244,20 +251,27 @@ def chart_rsi(df: pd.DataFrame) -> alt.Chart:
         label="datum.serie + ': ' + format(datum.valeur, '.2f')"
     )
 
-    return (lines + h30 + h70 + labels).properties(title=title, width="container", height=CHART_HEIGHT).interactive()
+    return (band_low + band_high + lines + h30 + h70 + labels).properties(
+        title=title, width="container", height=CHART_HEIGHT
+    ).interactive()
 
 def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
     df2 = df.dropna(subset=["date", "variation_pct"]).sort_values("date").copy()
     dmin, dmax = date_range_label(df2, "date")
     title = f"Variation journalière (rendements) — {dmin} à {dmax}"
 
-    line = alt.Chart(df2).mark_line().encode(
+    bars = alt.Chart(df2).mark_bar().encode(
         x=alt.X("date:T", title="Date"),
         y=alt.Y("variation_pct:Q", title="Rendement quotidien (décimal)"),
+        color=alt.condition(
+            alt.datum.variation_pct >= 0,
+            alt.value("#2ecc71"),
+            alt.value("#e74c3c")
+        ),
         tooltip=[alt.Tooltip("date:T"), alt.Tooltip("variation_pct:Q", format=".4f")]
     )
-    zero_rule = alt.Chart(pd.DataFrame({"y":[0.0]})).mark_rule().encode(y="y:Q")
-    return (line + zero_rule).properties(title=title, width="container", height=CHART_HEIGHT).interactive()
+    zero_rule = alt.Chart(pd.DataFrame({"y":[0.0]})).mark_rule(color="black").encode(y="y:Q")
+    return (bars + zero_rule).properties(title=title, width="container", height=CHART_HEIGHT).interactive()
 
 def chart_mm(df: pd.DataFrame) -> alt.Chart:
     df2 = df.dropna(subset=["date"]).sort_values("date").copy()
