@@ -316,9 +316,12 @@ components.html(
     """,
     height=0,
 )
-params = st.experimental_get_query_params()
+params = st.query_params
 try:
-    width = int(params.get("w", [0])[0])
+    w_param = params.get("w", 0)
+    if isinstance(w_param, list):
+        w_param = w_param[0]
+    width = int(w_param)
     CHART_HEIGHT = max(200, int(width * 0.6))
 except Exception:
     CHART_HEIGHT = DEFAULT_CHART_HEIGHT
