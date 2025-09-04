@@ -1,7 +1,7 @@
 # Graphique
 
 ## Description
-Application Streamlit produisant un conseil financier à partir de données Google Sheets. Elle effectue une analyse technique (RSI, moyennes mobiles, rendements) et affiche une recommandation textuelle.
+Application Streamlit produisant un conseil financier à partir de données Google Sheets. Elle effectue une analyse technique (RSI, moyennes mobiles, bandes de Bollinger, rendements) et affiche une recommandation textuelle.
 
 ## Prérequis logiciels
 - Python 3.9 ou version ultérieure
