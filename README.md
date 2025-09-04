@@ -1,7 +1,7 @@
 # Graphique
 
 ## Description
-Application Streamlit affichant plusieurs graphiques à partir de données Google Sheets. Elle utilise Altair pour la visualisation et met en forme les données via Pandas et NumPy.
+Application Streamlit produisant un conseil financier à partir de données Google Sheets. Elle effectue une analyse technique (RSI, moyennes mobiles, rendements) et affiche une recommandation textuelle.
 
 ## Prérequis logiciels
 - Python 3.9 ou version ultérieure
@@ -31,4 +31,4 @@ streamlit run app_mcp_http.py
 ## Exemple de flux de travail
 1. Cloner le dépôt et installer les dépendances.
 2. Lancer l'application avec `streamlit run app_mcp_http.py`.
-3. Ouvrir l'URL fournie par Streamlit dans un navigateur pour explorer les graphiques.
+3. Ouvrir l'URL fournie par Streamlit dans un navigateur pour obtenir le conseil financier.

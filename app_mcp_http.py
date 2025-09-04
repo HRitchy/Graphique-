@@ -1,5 +1,5 @@
-# app_gsheet_direct_altair.py
-# Streamlit + Altair : lecture directe Google Sheets (CSV) -> 3 graphiques
+# app_gsheet_finance.py
+# Streamlit : lecture directe Google Sheets (CSV) -> conseil financier
 
 import io
 import re
@@ -10,16 +10,12 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-import altair as alt
-import streamlit.components.v1 as components
 
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1C3ATTbCfnqT-Hx1gqHCA1wLv0Wl9RDrtVn1CgV2P6EY/edit?gid=0#gid=0"
 GID_VARIATION = 0
 GID_MM        = 45071720
 
 GID_RSI       = 372876708
-DEFAULT_CHART_HEIGHT = 280  # hauteur adaptée aux écrans mobiles
-CHART_HEIGHT = DEFAULT_CHART_HEIGHT
 
 # ---------- Utils ----------
 def extract_spreadsheet_id(url_or_id: str) -> str:
@@ -205,85 +201,70 @@ def insight_mm_line(df: pd.DataFrame) -> str:
     last_date = df["date"].dropna().max()
     last = df[df["date"] == last_date].iloc[-1] if pd.notna(last_date) else df.iloc[-1]
     config = "haussière" if last["mm50"] > last["mm200"] else "baissière"
-    rel_close = "au-dessus" if (last["close"] > max(last["mm50"], last["mm200"])) else ("au-dessous" if (last["close"] < min(last["mm50"], last["mm200"])) else "entre")
+    rel_close = (
+        "au-dessus" if (last["close"] > max(last["mm50"], last["mm200"]))
+        else ("au-dessous" if (last["close"] < min(last["mm50"], last["mm200"])) else "entre")
+    )
     dstr = last_date.date() if pd.notna(last_date) else "n.d."
     return f"Dernier point {dstr} — config MM {config}, cours {rel_close} des MM."
 
-# ---------- Charts Altair ----------
-def chart_rsi(df: pd.DataFrame) -> alt.Chart:
-    df2 = df.dropna(subset=["date"]).sort_values("date").copy()
-    dmin, dmax = date_range_label(df2, "date")
-    title = f"RSI (court, moyen, long) — {dmin} à {dmax}"
+# ---------- Conseil financier ----------
+def generate_financial_advice(
+    df_rsi: Optional[pd.DataFrame],
+    df_mm: Optional[pd.DataFrame],
+    df_var: Optional[pd.DataFrame],
+    msgs_var: List[str],
+) -> str:
+    lines: List[str] = []
+    if df_rsi is not None and not df_rsi.empty:
+        lines.append(insight_rsi_line(df_rsi))
+    if df_var is not None and not df_var.empty:
+        has_outliers = any("Outliers" in m for m in msgs_var)
+        lines.append(insight_variation_line(df_var, has_outliers))
+    if df_mm is not None and not df_mm.empty:
+        lines.append(insight_mm_line(df_mm))
 
-    long_cols = []
-    if "court" in df2.columns: long_cols.append(("court","Court"))
-    if "moyen" in df2.columns: long_cols.append(("moyen","Moyen"))
-    if "long_terme" in df2.columns: long_cols.append(("long_terme","Long Terme"))
-    if not long_cols:
-        raise ValueError("Aucune colonne RSI (court/moyen/long) détectée.")
+    recs: List[str] = []
+    if df_rsi is not None and not df_rsi.empty:
+        rsi_val = last_non_nan(df_rsi.get("moyen", pd.Series(dtype=float)))
+        if rsi_val is not None:
+            if rsi_val > 70:
+                recs.append(
+                    "RSI en zone de surachat — envisager une vente ou prise de bénéfices."
+                )
+            elif rsi_val < 30:
+                recs.append(
+                    "RSI en zone de survente — possibilité d'achat."
+                )
+            else:
+                recs.append("RSI neutre — pas de signal clair.")
 
-    melted = pd.melt(df2, id_vars=["date"], value_vars=[c for c,_ in long_cols],
-                     var_name="serie", value_name="valeur")
-    label_map = {src:lab for src,lab in long_cols}
-    melted["serie"] = melted["serie"].map(label_map)
+    if df_mm is not None and not df_mm.empty:
+        last = df_mm.sort_values("date").iloc[-1]
+        if last["mm50"] > last["mm200"] and last["close"] > last["mm50"]:
+            recs.append(
+                "Tendance haussière confirmée par les moyennes mobiles — biais acheteur."
+            )
+        elif last["mm50"] < last["mm200"] and last["close"] < last["mm50"]:
+            recs.append(
+                "Tendance baissière, cours sous les moyennes — prudence ou vente."
+            )
+        else:
+            recs.append(
+                "Situation mitigée autour des moyennes mobiles — attendre un signal plus clair."
+            )
 
-    base = alt.Chart(melted).encode(
-        x=alt.X("date:T", axis=alt.Axis(title="Date", labelAngle=-45, labelLimit=70, tickCount=10)),
-        y=alt.Y("valeur:Q", title="RSI", scale=alt.Scale(domain=[0,100])),
-        color=alt.Color("serie:N", title="Horizon"),
-        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
-    )
-    lines = base.mark_line()
-    h30 = alt.Chart(pd.DataFrame({"y":[30]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
-    h70 = alt.Chart(pd.DataFrame({"y":[70]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
+    if not recs:
+        recs.append("Données insuffisantes pour établir une recommandation.")
 
-    band_low = alt.Chart(pd.DataFrame({"y0":[0], "y1":[30]})).mark_rect(
-        color="#ffcccc", opacity=0.2
-    ).encode(y="y0:Q", y2="y1:Q")
-    band_high = alt.Chart(pd.DataFrame({"y0":[70], "y1":[100]})).mark_rect(
-        color="#ccffcc", opacity=0.2
-    ).encode(y="y0:Q", y2="y1:Q")
-
-    return (band_low + band_high + lines + h30 + h70).properties(
-        title=title, width="container", height=CHART_HEIGHT, autosize="fit"
-    ).interactive()
-
-def chart_variation(df: pd.DataFrame, msgs: List[str]) -> alt.Chart:
-    df2 = df.dropna(subset=["date", "variation_pct"]).sort_values("date").copy()
-    dmin, dmax = date_range_label(df2, "date")
-    title = f"Variation journalière (rendements) — {dmin} à {dmax}"
-
-    bars = alt.Chart(df2).mark_bar().encode(
-        x=alt.X("date:T", axis=alt.Axis(title="Date", labelAngle=-45, labelLimit=70, tickCount=10)),
-        y=alt.Y("variation_pct:Q", title="Rendement quotidien (décimal)"),
-        color=alt.condition(
-            alt.datum.variation_pct >= 0,
-            alt.value("#2ecc71"),
-            alt.value("#e74c3c")
-        ),
-        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("variation_pct:Q", format=".4f")]
-    )
-    zero_rule = alt.Chart(pd.DataFrame({"y":[0.0]})).mark_rule(color="black").encode(y="y:Q")
-    return (bars + zero_rule).properties(title=title, width="container", height=CHART_HEIGHT, autosize="fit").interactive()
-
-def chart_mm(df: pd.DataFrame) -> alt.Chart:
-    df2 = df.dropna(subset=["date"]).sort_values("date").copy()
-    melted = pd.melt(df2, id_vars=["date"], value_vars=["close","mm50","mm200"],
-                     var_name="serie", value_name="valeur")
-    label_map = {"close":"Cours (Close)", "mm50":"MM50", "mm200":"MM200"}
-    melted["serie"] = melted["serie"].map(label_map)
-
-    line = alt.Chart(melted).mark_line().encode(
-        x=alt.X("date:T", axis=alt.Axis(title="Date", labelAngle=-45, labelLimit=70, tickCount=10)),
-        y=alt.Y("valeur:Q", title="Prix"),
-        color=alt.Color("serie:N", title="Série"),
-        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("serie:N"), alt.Tooltip("valeur:Q", format=".2f")]
-    )
-    return line.properties(title="Cours vs MM50 vs MM200", width="container", height=CHART_HEIGHT, autosize="fit").interactive()
+    lines.append("")
+    lines.append("Recommandation :")
+    lines.extend(recs)
+    return "\n".join(lines)
 
 # ---------- App ----------
 st.set_page_config(
-    page_title="Google Sheets → Graphiques (Altair)",
+    page_title="Google Sheets → Conseil financier",
     layout="wide",
 )
 
@@ -297,30 +278,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.title("Google Sheets → Graphiques (lecture directe CSV, Altair)")
-
-components.html(
-    """
-    <script>
-    const params = new URLSearchParams(window.location.search);
-    if (!params.get('w')) {
-        params.set('w', window.innerWidth);
-        window.location.search = params.toString();
-    }
-    </script>
-    """,
-    height=0,
-)
-params = st.query_params
-try:
-    w_param = params.get("w", 0)
-    if isinstance(w_param, list):
-        w_param = w_param[0]
-    width = int(w_param)
-    CHART_HEIGHT = max(200, int(width * 0.6))
-    st.write(f"Largeur détectée : {width}")
-except Exception:
-    CHART_HEIGHT = DEFAULT_CHART_HEIGHT
+st.title("Google Sheets → Conseil financier (analyse technique)")
 
 with st.expander("Configuration"):
     st.header("Source")
@@ -332,7 +290,7 @@ with st.expander("Configuration"):
     gid_mm  = st.number_input("gid — MOYENNE MOBILE", value=GID_MM, step=1)
     gid_rsi = st.number_input("gid — RSI", value=GID_RSI, step=1)
 
-if st.button("Charger & produire les graphiques"):
+if st.button("Analyser les données"):
     try:
         sheet_id = extract_spreadsheet_id(url_or_id)
     except Exception as e:
@@ -367,32 +325,6 @@ if st.button("Charger & produire les graphiques"):
         st.error(f"[01_RSI] Erreur : {e}")
 
     st.markdown("---")
-    st.markdown("## Graphiques")
-
-    graphs = []
-    if df_rsi is not None and not df_rsi.empty:
-        graphs.append(("01_RSI", chart_rsi(df_rsi), insight_rsi_line(df_rsi)))
-    if df_var is not None and not df_var.empty:
-        has_outliers = any("Outliers" in m for m in msgs_var)
-        graphs.append(("02_Rendements", chart_variation(df_var, msgs_var), insight_variation_line(df_var, has_outliers), msgs_var))
-    if df_mm is not None and not df_mm.empty:
-        graphs.append(("03_Prix_MM50", chart_mm(df_mm), insight_mm_line(df_mm)))
-
-    if graphs:
-        labels = [g[0] for g in graphs]
-        selected = st.selectbox("Choisir un graphique", labels)
-        for g in graphs:
-            label, chart_obj, insight, *extra = g
-            if label == selected:
-                try:
-                    st.altair_chart(chart_obj, use_container_width=True)
-                    st.caption(f"{label} — {insight}")
-                    if extra:
-                        for m in extra[0]:
-                            if "Outliers" in m:
-                                st.info(m)
-                except Exception as e:
-                    st.error(f"[{label}] Rendu indisponible : {e}")
-                break
-    else:
-        st.info("Aucune donnée à afficher.")
+    st.markdown("## Conseil financier")
+    advice = generate_financial_advice(df_rsi, df_mm, df_var, msgs_var)
+    st.write(advice)
