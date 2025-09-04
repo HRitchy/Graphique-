@@ -155,6 +155,14 @@ def load_mm(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     out = d[[c_date, c_close, c_mm50, c_mm200]].rename(columns={
         c_date: "date", c_close: "close", c_mm50: "mm50", c_mm200: "mm200"
     })
+    # Bandes de Bollinger (20 jours, +/- 2 écarts-types)
+    window = 20
+    rolling = out["close"].rolling(window=window, min_periods=window)
+    ma = rolling.mean()
+    std = rolling.std()
+    out["bb_middle"] = ma
+    out["bb_upper"] = ma + 2 * std
+    out["bb_lower"] = ma - 2 * std
     return out, msgs
 
 def load_rsi(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
@@ -208,6 +216,21 @@ def insight_mm_line(df: pd.DataFrame) -> str:
     dstr = last_date.date() if pd.notna(last_date) else "n.d."
     return f"Dernier point {dstr} — config MM {config}, cours {rel_close} des MM."
 
+def insight_bollinger_line(df: pd.DataFrame) -> str:
+    last_date = df["date"].dropna().max()
+    last = df.sort_values("date").iloc[-1]
+    upper = last.get("bb_upper", np.nan)
+    lower = last.get("bb_lower", np.nan)
+    dstr = last_date.date() if pd.notna(last_date) else "n.d."
+    if np.isnan(upper) or np.isnan(lower):
+        return f"Dernier point {dstr} — bandes de Bollinger indisponibles."
+    pos = (
+        "au-dessus" if last["close"] > upper else (
+            "au-dessous" if last["close"] < lower else "à l'intérieur"
+        )
+    )
+    return f"Dernier point {dstr} — cours {pos} des bandes de Bollinger (20j)."
+
 # ---------- Conseil financier ----------
 def generate_financial_advice(
     df_rsi: Optional[pd.DataFrame],
@@ -223,6 +246,7 @@ def generate_financial_advice(
         lines.append(insight_variation_line(df_var, has_outliers))
     if df_mm is not None and not df_mm.empty:
         lines.append(insight_mm_line(df_mm))
+        lines.append(insight_bollinger_line(df_mm))
 
     recs: List[str] = []
     if df_rsi is not None and not df_rsi.empty:
@@ -230,11 +254,11 @@ def generate_financial_advice(
         if rsi_val is not None:
             if rsi_val > 70:
                 recs.append(
-                    "RSI en zone de surachat — envisager une vente ou prise de bénéfices."
+                    "RSI en zone de surachat — envisager une vente ou prise de bénéfices.",
                 )
             elif rsi_val < 30:
                 recs.append(
-                    "RSI en zone de survente — possibilité d'achat."
+                    "RSI en zone de survente — possibilité d'achat.",
                 )
             else:
                 recs.append("RSI neutre — pas de signal clair.")
@@ -243,16 +267,23 @@ def generate_financial_advice(
         last = df_mm.sort_values("date").iloc[-1]
         if last["mm50"] > last["mm200"] and last["close"] > last["mm50"]:
             recs.append(
-                "Tendance haussière confirmée par les moyennes mobiles — biais acheteur."
+                "Tendance haussière confirmée par les moyennes mobiles — biais acheteur.",
             )
         elif last["mm50"] < last["mm200"] and last["close"] < last["mm50"]:
             recs.append(
-                "Tendance baissière, cours sous les moyennes — prudence ou vente."
+                "Tendance baissière, cours sous les moyennes — prudence ou vente.",
             )
         else:
             recs.append(
-                "Situation mitigée autour des moyennes mobiles — attendre un signal plus clair."
+                "Situation mitigée autour des moyennes mobiles — attendre un signal plus clair.",
             )
+
+        upper = last.get("bb_upper")
+        lower = last.get("bb_lower")
+        if pd.notna(upper) and last["close"] > upper:
+            recs.append("Cours au-dessus des bandes de Bollinger — surachat possible.")
+        elif pd.notna(lower) and last["close"] < lower:
+            recs.append("Cours au-dessous des bandes de Bollinger — survente possible.")
 
     if not recs:
         recs.append("Données insuffisantes pour établir une recommandation.")
